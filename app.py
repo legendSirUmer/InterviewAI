@@ -271,9 +271,9 @@ def call_llm(client, system_prompt, user_prompt, temperature=0.5, max_tokens=700
 
 def generate_json_feedback(client, question, answer, target_role, experience, focus):
     system_prompt = """
-You are an elite interview evaluator.
+You are an elite, practical interview evaluator.
 
-Evaluate the candidate's answer fairly and specifically.
+Evaluate the candidate's answer fairly, specifically, and concisely.
 
 Return ONLY valid JSON using exactly this schema:
 {
@@ -290,7 +290,12 @@ Return ONLY valid JSON using exactly this schema:
 
 All scores must be integers from 1 to 10.
 Do not invent facts about the candidate.
-The model answer should be concise but strong.
+
+Guidelines for brevity and human tone:
+- strengths: 2 brief, specific bullet points (1 concise sentence each).
+- improvements: 2 brief, actionable bullet points (1 concise sentence each).
+- follow_up_focus: 1 brief sentence.
+- model_answer: Keep it brief, conversational, and impactful (2-3 sentences, under 70 words). It should sound like a polished, confident human candidate speaking naturally in an interview, without academic jargon or fluff.
 """
 
     prompt = f"""
@@ -311,7 +316,7 @@ Candidate answer:
             system_prompt,
             prompt,
             temperature=0.2,
-            max_tokens=900,
+            max_tokens=650,
         )
         data = json.loads(raw)
 
@@ -362,19 +367,17 @@ def generate_question(
     previous_feedback = previous_feedback or {}
 
     system_prompt = """
-You are the Interviewer Agent in an adaptive mock interview.
+You are an experienced, warm, and sharp human hiring manager conducting a live interview.
 
-Your job is ONLY to ask one interview question.
-Never provide feedback, scoring, or the answer.
+Your job is ONLY to ask ONE short, humanized interview question.
+Never provide feedback, scoring, preamble, or the answer.
 
-Rules:
-- Ask exactly ONE question.
-- Make it realistic for the target role.
-- Adapt difficulty based on the candidate's previous performance.
-- If the candidate mentioned a project, technology, trade-off, or decision,
-  probe that exact topic when useful.
-- Avoid repeating previous questions.
-- Keep questions focused and interview-ready.
+Strict Rules:
+- Ask exactly ONE short, natural question (1 to 2 sentences maximum).
+- Humanize your phrasing: sound like a real person having a live discussion (e.g. "Can you walk me through how you handled...", "What was the biggest hurdle when you built...", "Why did you choose X over Y?").
+- Strictly avoid robotic, academic, multi-part, or bullet-pointed questions.
+- Keep it direct and focused on one specific concept, trade-off, or project experience.
+- Output ONLY the question itself. No greetings, no preamble, and no quotes.
 """
 
     prompt = f"""
@@ -382,29 +385,29 @@ Target role: {target_role}
 Experience level: {experience}
 Interview focus: {focus}
 Difficulty: {difficulty}
-Question number: {question_number}
+Question #{question_number}
 
-Relevant resume/JD context:
+Resume/JD context:
 {rag_context or "No document context available."}
 
 Previous question:
-{previous_question or "None"}
+{previous_question or "None (start of interview)"}
 
 Previous candidate answer:
 {previous_answer or "None"}
 
-Previous evaluation:
+Previous evaluation summary:
 {json.dumps(previous_feedback, ensure_ascii=False) if previous_feedback else "None"}
 
-Generate the next question now.
+Ask the next short, humanized question now:
 """
 
     return call_llm(
         client,
         system_prompt,
         prompt,
-        temperature=0.65,
-        max_tokens=300,
+        temperature=0.6,
+        max_tokens=120,
     )
 
 
@@ -832,17 +835,17 @@ with tab_interview:
             answer = st.text_area(
                 "Review / Edit Your Answer",
                 key=answer_key,
-                height=180,
-                placeholder="Your transcribed answer will appear here. You can refine or edit it before submitting.",
+                height=160,
+                placeholder="Your transcribed answer will appear here. Keep it brief and focused (2-4 sentences) before submitting.",
             )
         else:
             answer = st.text_area(
                 "Your Answer",
                 key=answer_key,
-                height=180,
+                height=160,
                 placeholder=(
-                    "Answer as if you were in a real interview. "
-                    "Explain your reasoning and give concrete examples."
+                    "Keep your answer brief and conversational (2-4 sentences). "
+                    "Focus on your approach, technologies used, and key impact."
                 ),
             )
 
