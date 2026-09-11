@@ -209,6 +209,53 @@ def retrieve_context(query, rag_index, top_k=4):
     return "\n\n--- Retrieved Context ---\n\n".join(selected)
 
 
+
+def transcribe_audio(client, audio_data, filename="recording.wav"):
+    """
+    Transcribe recorded or uploaded audio using Groq's Whisper API.
+    Supports bytes, BytesIO, or file-like audio objects.
+    """
+    if not client or not audio_data:
+        return ""
+
+    try:
+        if hasattr(audio_data, "getvalue"):
+            raw_bytes = audio_data.getvalue()
+        elif hasattr(audio_data, "read"):
+            raw_bytes = audio_data.read()
+        elif isinstance(audio_data, (bytes, bytearray)):
+            raw_bytes = bytes(audio_data)
+        else:
+            return ""
+
+        if not raw_bytes:
+            return ""
+
+        bio = io.BytesIO(raw_bytes)
+        bio.name = filename or "recording.wav"
+
+        for model_name in ["whisper-large-v3", "whisper-large-v3-turbo"]:
+            try:
+                bio.seek(0)
+                resp = client.audio.transcriptions.create(
+                    file=(bio.name, bio),
+                    model=model_name,
+                )
+                if hasattr(resp, "text") and resp.text:
+                    return resp.text.strip()
+                if isinstance(resp, str) and resp:
+                    return resp.strip()
+                if isinstance(resp, dict) and resp.get("text"):
+                    return resp["text"].strip()
+            except Exception:
+                continue
+
+    except Exception as exc:
+        st.warning(f"Voice transcription error: {exc}")
+
+    return ""
+
+
 def call_llm(client, system_prompt, user_prompt, temperature=0.5, max_tokens=700):
     response = client.chat.completions.create(
         model="openai/gpt-oss-120b",
@@ -595,17 +642,18 @@ if not st.session_state.interview_started:
         "**Start New Interview**."
     )
 
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2, c3, c4, c5 = st.columns(5)
 
     cards = [
         ("🤖", "Adaptive Interviewer", "Dynamic follow-up questions"),
+        ("🎙️", "Voice & Text", "Speech-to-text with Whisper"),
         ("🧠", "AI Evaluator", "Five-dimensional scoring"),
         ("📚", "RAG Context", "Resume/JD-aware questions"),
         ("📊", "Analytics", "Track performance over time"),
     ]
 
     for col, (icon, title, text) in zip(
-        [c1, c2, c3, c4], cards
+        [c1, c2, c3, c4, c5], cards
     ):
         with col:
             st.markdown(
@@ -628,10 +676,11 @@ if not st.session_state.interview_started:
         2. The app extracts and chunks the document.
         3. Relevant chunks are retrieved for each question.
         4. The **Interviewer Agent** asks one adaptive question.
-        5. The **Evaluator Agent** scores the answer.
-        6. The next question adapts to the candidate's performance.
-        7. Analytics identify strengths and recurring weaknesses.
-        8. A complete Markdown report can be exported.
+        5. **Respond using Voice (mic/audio transcribed via Whisper) or Text**.
+        6. The **Evaluator Agent** scores the answer across 5 dimensions.
+        7. The next question adapts to the candidate's performance.
+        8. Analytics identify strengths and recurring weaknesses.
+        9. A complete Markdown report can be exported.
         """
     )
 
@@ -721,12 +770,75 @@ with tab_interview:
             "🎉 Interview complete! Open the Analytics or Final Report tab."
         )
     else:
-        with st.form(
-            "answer_form",
-            clear_on_submit=True,
-        ):
+        answer_key = f"answer_box_{st.session_state.question_count}"
+        if answer_key not in st.session_state:
+            st.session_state[answer_key] = ""
+
+        input_mode = st.radio(
+            "Response Mode:",
+            ["✍️ Text", "🎙️ Voice (Speech-to-Text)"],
+            horizontal=True,
+            key=f"input_mode_{st.session_state.question_count}",
+        )
+
+        if "🎙️ Voice" in input_mode:
+            st.markdown(
+                """
+                <div style="background: rgba(99, 102, 241, 0.08); border: 1px solid #4F46E5; border-radius: 10px; padding: 12px 16px; margin: 10px 0;">
+                    <span style="color: #A5B4FC; font-weight: 600;">🎙️ Speak your answer naturally:</span>
+                    <span style="color: #94A3B8; font-size: 13px;"> Record your answer with your microphone or upload an audio file. Groq Whisper will transcribe it below so you can review or edit it before submitting.</span>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+            audio_file = None
+            if hasattr(st, "audio_input"):
+                audio_file = st.audio_input(
+                    "Click microphone to record your response",
+                    key=f"mic_{st.session_state.question_count}",
+                )
+
+            with st.expander("📁 Or upload an audio file (wav, mp3, m4a, webm)", expanded=(audio_file is None and not st.session_state[answer_key])):
+                uploaded_audio = st.file_uploader(
+                    "Upload audio file",
+                    type=["wav", "mp3", "m4a", "ogg", "webm", "flac"],
+                    key=f"audio_upload_{st.session_state.question_count}",
+                    label_visibility="collapsed",
+                )
+                if uploaded_audio:
+                    audio_file = uploaded_audio
+
+            if audio_file is not None:
+                audio_bytes = audio_file.getvalue()
+                audio_sig = f"{len(audio_bytes)}_{getattr(audio_file, 'name', 'audio')}"
+                sig_key = f"transcribed_sig_{st.session_state.question_count}"
+
+                if st.session_state.get(sig_key) != audio_sig:
+                    with st.spinner("⚡ Transcribing audio with Groq Whisper..."):
+                        transcript = transcribe_audio(
+                            client,
+                            audio_bytes,
+                            filename=getattr(audio_file, "name", "recording.wav"),
+                        )
+                        if transcript:
+                            st.session_state[answer_key] = transcript
+                            st.session_state[sig_key] = audio_sig
+                            st.toast("Audio transcribed! Review or edit below.", icon="🎙️")
+                            st.rerun()
+                        else:
+                            st.error("Could not transcribe speech. Please re-record or switch to Text mode.")
+
+            answer = st.text_area(
+                "Review / Edit Your Answer",
+                key=answer_key,
+                height=180,
+                placeholder="Your transcribed answer will appear here. You can refine or edit it before submitting.",
+            )
+        else:
             answer = st.text_area(
                 "Your Answer",
+                key=answer_key,
                 height=180,
                 placeholder=(
                     "Answer as if you were in a real interview. "
@@ -734,15 +846,21 @@ with tab_interview:
                 ),
             )
 
-            submit = st.form_submit_button(
+        col_submit, col_clear = st.columns([5, 1])
+        with col_submit:
+            submit = st.button(
                 "Submit Answer & Evaluate 🚀",
                 use_container_width=True,
                 type="primary",
             )
+        with col_clear:
+            if st.button("Clear 🗑️", use_container_width=True):
+                st.session_state[answer_key] = ""
+                st.rerun()
 
         if submit:
             if not answer.strip():
-                st.warning("Please enter an answer first.")
+                st.warning("Please enter or record an answer first.")
             else:
                 question = st.session_state.current_question
 
