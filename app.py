@@ -174,7 +174,7 @@ def build_rag_index(text):
 
     return [
         {
-            "text": chunk,
+            "text": text,
             "vectorizer": vectorizer,
             "matrix": matrix,
             "chunks": chunks,
