@@ -109,21 +109,21 @@ DEFAULTS = {
     "interview_type": "Technical & System Design",
     "messages": [],
     "feedback_history": [],
-    "current_question": "You mentioned deploying Django applications with Docker. Walk me through how you containerized the application, managed multi-stage builds, and handled production configuration & secrets without baking them into image layers.",
-    "question_count": 3,
+    "current_question": "",
+    "question_count": 1,
     "total_questions": 6,
-    "audio_transcript": "So for our container pipeline, um we started with a multi-stage Alpine Dockerfile. In the build stage, we compiled wheels, and in the runtime stage, we copied only wheels... like avoiding gcc bloat. We also passed environment secrets via AWS Secrets Manager at task startup so they were not baked into layers.",
+    "audio_transcript": "",
     "voice_metrics": {
-        "speaking_pace_wpm": 142,
-        "filler_words_count": 2,
-        "filler_words_found": ["um", "like"],
-        "duration_seconds": 84,
-        "clarity_score": 9.2,
-        "pace_rating": "Optimal 🟢",
+        "speaking_pace_wpm": None,
+        "filler_words_count": None,
+        "filler_words_found": [],
+        "duration_seconds": 0,
+        "clarity_score": None,
+        "pace_rating": None,
     },
     "interview_state": {
         "difficulty": "Hard",
-        "question_number": 3,
+        "question_number": 1,
         "skills_tested": ["Docker", "Django", "Secrets Isolation"],
         "weak_areas": ["BuildKit Secret Mounting", "Non-Root Daemon UID"],
         "strong_areas": ["Multi-Stage Separation", "Runtime Secret Isolation"],
@@ -201,45 +201,75 @@ def build_cockpit_html():
     """
     html_content = html_content.replace("</head>", f"{bootstrap_js}</head>")
 
-    # 1. Update Header and Cockpit Sidebar
-    html_content = re.sub(r"#sess-8f3a", f"#{sess_id}", html_content)
-    html_content = re.sub(r"Backend Software Eng", role, html_content)
-    html_content = re.sub(r"FAANG-Style", persona, html_content)
-    html_content = re.sub(r"Hard L5", f"{diff} L5", html_content)
-    html_content = re.sub(r"Alex Chen", candidate, html_content)
+    # 1. Update Candidate and Role values in Cockpit inputs
+    html_content = re.sub(r'value="Alex Chen"', f'value="{candidate}"', html_content)
+    html_content = re.sub(r'value="Backend Software Eng"', f'value="{role}"', html_content)
 
-    # 2. Update Active Question
-    q_text = html.escape(st.session_state.current_question)
-    # Target the prompt paragraph inside the technical escalation card
+    # 2. Update Active Question (if populated, otherwise preserves default placeholder)
+    if st.session_state.current_question:
+        q_text = html.escape(st.session_state.current_question)
+        html_content = re.sub(
+            r'<p class="font-body-lg[^"]*" id="questionPromptText">.*?</p>',
+            f'<p class="font-body-lg text-body-lg text-on-surface leading-relaxed" id="questionPromptText">“{q_text}”</p>',
+            html_content,
+            flags=re.DOTALL,
+        )
+
+    # Dynamic progress bar segments: green for completed, glowing for current, muted for upcoming
+    progress_bar_segments = ""
+    for i in range(1, total_q + 1):
+        if i < q_num:
+            progress_bar_segments += f'<div class="h-2 flex-1 rounded-full bg-tertiary shadow-[0_0_10px_rgba(78,222,163,0.55)] transition-all hover:scale-105" title="Question {i}: Completed"></div>'
+        elif i == q_num:
+            progress_bar_segments += f'<div class="h-2 flex-1 rounded-full bg-gradient-to-r from-secondary via-primary-container to-primary animate-pulse shadow-[0_0_16px_rgba(128,131,255,0.95)] ring-1 ring-primary-container transition-all hover:scale-105" title="Question {i}: Active Probe"></div>'
+        else:
+            progress_bar_segments += f'<div class="h-2 flex-1 rounded-full bg-surface-container-highest/80 transition-all hover:bg-surface-container-highest" title="Question {i}: Upcoming"></div>'
+
     html_content = re.sub(
-        r"“You mentioned deploying Django applications with Docker.*?without baking them into image layers\.”",
-        f"“{q_text}”",
+        r'<!-- PROGRESS_BAR_START -->.*?<!-- PROGRESS_BAR_END -->',
+        f'<!-- PROGRESS_BAR_START -->\n{progress_bar_segments}\n<!-- PROGRESS_BAR_END -->',
         html_content,
         flags=re.DOTALL,
     )
-    html_content = re.sub(r"Question 3 of 6", f"Question {q_num} of {total_q}", html_content)
+    html_content = re.sub(r"Question \d+ of \d+", f"Question {q_num} of {total_q}", html_content)
 
-    # 3. Update Transcript & Filler Highlighting
-    raw_transcript = st.session_state.audio_transcript
-    highlighted_tr = highlight_filler_words(raw_transcript)
-    html_content = re.sub(
-        r"So for our container pipeline, <span class=\"bg-amber-500/20 text-amber-300.*?not baked into layers\.",
-        highlighted_tr,
-        html_content,
-        flags=re.DOTALL,
-    )
+    # 3. Update Transcript & Filler Highlighting (if recorded)
+    if st.session_state.audio_transcript:
+        raw_transcript = st.session_state.audio_transcript
+        highlighted_tr = highlight_filler_words(raw_transcript)
+        html_content = re.sub(
+            r'<div class="[^"]*" contenteditable="true" id="liveTranscript"[^>]*>.*?</div>',
+            f'<div class="bg-surface-container-lowest/90 rounded-xl p-space-md font-body-md text-body-md text-on-surface leading-relaxed focus:outline-none focus:ring-1 focus:ring-primary shadow-inner min-h-[100px]" contenteditable="true" id="liveTranscript">{highlighted_tr}</div>',
+            html_content,
+            flags=re.DOTALL,
+        )
 
-    # 4. Update Voice Metrics
+    # 4. Update Voice Metrics (if available)
     vm = st.session_state.voice_metrics
-    wpm_val = vm.get("speaking_pace_wpm", 142)
-    fillers_val = vm.get("filler_words_count", 2)
-    duration_str = format_duration(vm.get("duration_seconds", 84))
-    clarity_val = vm.get("clarity_score", 9.2)
+    if vm.get("speaking_pace_wpm") is not None:
+        wpm_val = vm.get("speaking_pace_wpm")
+        fillers_val = vm.get("filler_words_count", 0)
+        dur_str = format_duration(vm.get("duration_seconds", 0))
+        clarity_val = vm.get("clarity_score", 9.0)
 
-    html_content = re.sub(r">142 <span", f">{wpm_val} <span", html_content)
-    html_content = re.sub(r">2 <span class=\"font-body-sm text-body-sm\">detected</span>", f">{fillers_val} <span class=\"font-body-sm text-body-sm\">detected</span>", html_content)
-    html_content = re.sub(r">1m 24s<", f">{duration_str}<", html_content)
-    html_content = re.sub(r">9\.2<span", f">{clarity_val}<span", html_content)
+        html_content = re.sub(r'<span class="[^"]*" id="statPace">.*?</span>', f'<span class="font-headline-sm text-headline-sm text-tertiary font-bold" id="statPace">{wpm_val} <span class="font-body-sm text-body-sm">WPM</span></span>', html_content)
+        html_content = re.sub(r'<span class="[^"]*" id="statFillers">.*?</span>', f'<span class="font-headline-sm text-headline-sm text-amber-300 font-bold" id="statFillers">{fillers_val} <span class="font-body-sm text-body-sm">detected</span></span>', html_content)
+        html_content = re.sub(r'<span class="[^"]*" id="statDuration">.*?</span>', f'<span class="font-headline-sm text-headline-sm text-on-surface font-bold" id="statDuration">{dur_str}</span>', html_content)
+        html_content = re.sub(r'<span class="[^"]*" id="statClarity">.*?</span>', f'<span class="font-headline-sm text-headline-sm text-tertiary font-bold" id="statClarity">{clarity_val}<span class="font-body-sm text-body-sm">/10</span></span>', html_content)
+
+    # Update Dynamic Escalation Pill & Benchmark
+    if diff == "Easy":
+        html_content = re.sub(r'id="liveEscalationPillText">.*?</span>', 'id="liveEscalationPillText">⚡ Easy (L3 Core)</span>', html_content)
+        html_content = re.sub(r'id="liveCandidateBenchmarkPill">.*?</span>', 'id="liveCandidateBenchmarkPill">\nCandidate L3 • Benchmark: Tier 1 Junior Core\n</span>', html_content)
+    elif diff == "Medium":
+        html_content = re.sub(r'id="liveEscalationPillText">.*?</span>', 'id="liveEscalationPillText">⚡ Medium (Production Systems)</span>', html_content)
+        html_content = re.sub(r'id="liveCandidateBenchmarkPill">.*?</span>', 'id="liveCandidateBenchmarkPill">\nCandidate L4 • Benchmark: Mid-Level Backend Eng\n</span>', html_content)
+    elif diff == "Hard":
+        html_content = re.sub(r'id="liveEscalationPillText">.*?</span>', 'id="liveEscalationPillText">⚡ Hard (Escalated from Medium)</span>', html_content)
+        html_content = re.sub(r'id="liveCandidateBenchmarkPill">.*?</span>', 'id="liveCandidateBenchmarkPill">\nCandidate L5 • Benchmark: Stripe Eng II\n</span>', html_content)
+    elif diff in ["Architect", "Staff"]:
+        html_content = re.sub(r'id="liveEscalationPillText">.*?</span>', 'id="liveEscalationPillText">⚡ Architect L6 (Distributed Scale)</span>', html_content)
+        html_content = re.sub(r'id="liveCandidateBenchmarkPill">.*?</span>', 'id="liveCandidateBenchmarkPill">\nCandidate L6 • Benchmark: Principal / Staff Eng\n</span>', html_content)
 
     # 5. Update Evaluation Scores (Tab 2) if available
     if st.session_state.feedback_history:
