@@ -298,7 +298,7 @@
 <span class="material-symbols-outlined text-[18px]">terminal</span>
 <span>5. Live Coding IDE</span>
 </button>
-<button aria-selected="false" class="tab-trigger flex items-center gap-2 px-space-md py-2.5 rounded-xl font-headline-sm text-body-md text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-all duration-200" data-target="tab-executive-dash" role="tab" type="button">
+<button id="telemetryTabTrigger" aria-selected="false" class="hidden tab-trigger items-center gap-2 px-space-md py-2.5 rounded-xl font-headline-sm text-body-md text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-all duration-200" data-target="tab-executive-dash" role="tab" type="button">
 <span class="material-symbols-outlined text-[18px]">insights</span>
 <span>6. Executive Telemetry</span>
 </button>
@@ -825,7 +825,7 @@ Auto-Remove Fillers
 </div>
 </div>
 <!-- Right: Extracted Skill Weight Distribution (6 cols) -->
-<div class="lg:col-span-6 bg-surface-container-low rounded-2xl p-space-lg shadow-lg flex flex-col gap-space-md">
+<div id="extractedSkillContainer" class="hidden lg:col-span-6 bg-surface-container-low rounded-2xl p-space-lg shadow-lg flex flex-col gap-space-md">
 <div class="flex items-center justify-between">
 <div class="flex items-center gap-space-xs">
 <span class="material-symbols-outlined text-tertiary text-[20px]">analytics</span>
@@ -834,7 +834,7 @@ Auto-Remove Fillers
 <span class="font-label-code-sm text-label-code-sm text-tertiary">CALIBRATED FROM JD</span>
 </div>
 <!-- Stacked Horizontal Bar Distribution -->
-<div class="flex flex-col gap-space-sm pt-space-xs">
+<div id="skillBarsContainer" class="flex flex-col gap-space-sm pt-space-xs">
 <div>
 <div class="flex justify-between font-label-code-sm text-label-code-sm mb-1">
 <span class="text-on-surface font-semibold">Python Core &amp; Concurrency</span>
@@ -897,7 +897,7 @@ Auto-Remove Fillers
 </div>
 </div>
 <!-- Bottom Visual 4-Stage Interview Blueprint -->
-<div class="bg-surface-container-low rounded-2xl p-space-lg shadow-lg flex flex-col gap-space-md">
+<div id="blueprintContainer" class="hidden bg-surface-container-low rounded-2xl p-space-lg shadow-lg flex flex-col gap-space-md">
 <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-space-sm">
 <div>
 <span class="font-headline-sm text-headline-sm text-on-surface font-bold">Synthesized 4-Stage Interview Blueprint</span>
@@ -908,7 +908,7 @@ Auto-Remove Fillers
 <span>Apply Curriculum to Live Interview</span>
 </button>
 </div>
-<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-space-md">
+<div id="blueprintGrid" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-space-md">
 <!-- Stage 1 Card -->
 <div class="bg-surface-container rounded-xl p-space-md flex flex-col justify-between">
 <div>
@@ -1964,15 +1964,14 @@ ${transcript}
       }
     }
 
-    const storedApiKey = (typeof window !== 'undefined' && window.GROQ_API_KEY) || safeGetStorage('interviewai_api_key') || safeGetStorage('groq_api_key') || '';
-    if (storedApiKey && storedApiKey.trim().length > 0) {
-      window.GROQ_API_KEY = storedApiKey;
-      window.GROK_API_KEY = storedApiKey;
-      if (cockpitApiKeyInput) cockpitApiKeyInput.value = storedApiKey;
-      setApiStatus(true, 'Connected');
-    } else {
-      setApiStatus(false, 'Key Required');
+    // Remove old persisted keys if they exist to enforce the new security rule
+    if (typeof localStorage !== 'undefined') {
+        localStorage.removeItem('interviewai_api_key');
+        localStorage.removeItem('groq_api_key');
     }
+
+    // Initialize as Key Required since it won't be stored or injected
+    setApiStatus(false, 'Key Required');
 
     if (toggleApiKeyVisibility && cockpitApiKeyInput) {
       toggleApiKeyVisibility.addEventListener('click', () => {
@@ -1989,14 +1988,14 @@ ${transcript}
         if (!keyVal) {
           showToast('Please enter a valid Grok or Groq API key', 'warning');
           setApiStatus(false, 'Key Required');
+          window.GROQ_API_KEY = '';
           return;
         }
-        safeSetStorage('interviewai_api_key', keyVal);
-        safeSetStorage('groq_api_key', keyVal);
+        // Save only in-memory
         window.GROQ_API_KEY = keyVal;
         window.GROK_API_KEY = keyVal;
         setApiStatus(true, 'Connected');
-        showToast('Grok / Groq API Key Saved & Connected!', 'bolt');
+        showToast('✅ API Key Authenticated (Session Only)', 'bolt');
       });
     }
 
@@ -2725,13 +2724,14 @@ ${transcript}
                 "Authorization": "Bearer " + window.GROQ_API_KEY
               },
               body: JSON.stringify({
-                model: "llama-3.1-8b-instant",
+                model: "openai/gpt-oss-120b",
                 messages: [{role: "system", content: "You are an elite, calibration-grade technical interviewer. Return ONLY valid JSON."}, {role: "user", content: promptText}],
                 response_format: { type: "json_object" },
                 temperature: 0.2
               })
             });
             const data = await resp.json();
+            if (!resp.ok) { throw new Error(data.error?.message || 'HTTP ' + resp.status); }
             const parsed = JSON.parse(data.choices[0].message.content);
             techScore = parsed.technical_score || techScore;
             completenessScore = parsed.completeness_score || completenessScore;
@@ -2907,9 +2907,23 @@ ${transcript}
         const isPlaceholder = qEl && qEl.innerText.includes('Click “Start Adaptive Session”');
         let nextQ = currentQuestionNum;
         if (!isPlaceholder) {
-          nextQ = (currentQuestionNum % totalQuestionsCount) + 1;
+          nextQ = currentQuestionNum + 1;
+          if (nextQ > totalQuestionsCount) {
+              // Interview is fully completed
+              const tTrigger = document.getElementById('telemetryTabTrigger');
+              if (tTrigger) {
+                  tTrigger.classList.remove('hidden');
+                  tTrigger.classList.add('flex');
+              }
+              switchTab('tab-executive-dash');
+              showToast('Interview Complete! Initializing Executive Telemetry...', 'verified');
+              if (startInterviewBtn) {
+                  startInterviewBtn.disabled = false;
+                  startInterviewBtn.innerHTML = originalBtnHtml;
+              }
+              return;
+          }
         }
-
         const cName = document.getElementById('cockpitCandidateName')?.value || 'Alex Chen';
         const cRole = document.getElementById('cockpitTargetRole')?.value || 'Backend Software Eng';
         const cLevel = document.getElementById('profileLevelSelect')?.value || 'L5';
@@ -2927,7 +2941,13 @@ ${transcript}
 
         if (window.GROQ_API_KEY) {
           try {
-            const prompt = `You are a strict, expert technical interviewer. \nCandidate: ${cName}\nRole: ${cRole}\nLevel: ${cLevel}\nVector: ${cVector}\nDifficulty: ${diff}\n\nJob Description Context:\n${jdText}\n\nResume Context:\n${resumeText}\n\nGenerate ONE highly relevant, challenging interview question tailored to the Job Description and the Candidate's Resume. Return a JSON object with: "question" (the question string) and "topic" (a 2-3 word topic summary).`;
+            const prevQ = document.getElementById('questionPromptText')?.innerText || '';
+            const prevA = document.getElementById('liveTranscript')?.innerText || '';
+            let historyContext = "";
+            if (prevQ && !prevQ.includes("Click") && prevA && !prevA.includes("will appear here in real time")) {
+                historyContext = `\n\nPrevious Question:\n${prevQ}\n\nPrevious Candidate Answer:\n${prevA}\n\nBased on the candidate's previous answer, ask a follow-up question, or move on to a new related topic if the answer was satisfactory.`;
+            }
+            const prompt = `You are a strict, expert technical interviewer. \nCandidate: ${cName}\nRole: ${cRole}\nLevel: ${cLevel}\nVector: ${cVector}\nDifficulty: ${diff}\n\nJob Description Context:\n${jdText}\n\nResume Context:\n${resumeText}${historyContext}\n\nGenerate ONE highly relevant, challenging interview question tailored to the Job Description, Resume, and the conversational history. Return a JSON object with: "question" (the question string) and "topic" (a 2-3 word topic summary).`;
             
             const resp = await fetch("https://api.groq.com/openai/v1/chat/completions", {
               method: "POST",
@@ -2936,7 +2956,7 @@ ${transcript}
                 "Authorization": "Bearer " + window.GROQ_API_KEY
               },
               body: JSON.stringify({
-                model: "llama-3.1-8b-instant",
+                model: "openai/gpt-oss-120b",
                 messages: [{role: "system", content: "You are an elite, calibration-grade technical interviewer. Return ONLY valid JSON."}, {role: "user", content: prompt}],
                 response_format: { type: "json_object" },
                 temperature: 0.7
@@ -2944,6 +2964,7 @@ ${transcript}
             });
             
             const data = await resp.json();
+            if (!resp.ok) { throw new Error(data.error?.message || 'HTTP ' + resp.status); }
             const parsed = JSON.parse(data.choices[0].message.content);
             
             const probeIdx = (nextQ - 1) % sampleProbes.length;
@@ -3176,7 +3197,7 @@ ${transcript}
 
         if (window.GROQ_API_KEY) {
           try {
-            const promptText = `Job Description: ${jdText}\n\nResume: ${resumeText}\n\nEvaluate the resume against the JD. Return ONLY JSON matching this schema:\n{\n  "overall_match_percentage": 85,\n  "technical_skills_score": 8.5,\n  "project_depth_score": 8.0,\n  "impact_statements_score": 7.5,\n  "ats_readiness_score": 9.0,\n  "role_alignment_score": 8.5,\n  "matching_skills": ["Python", "Django", "Docker"],\n  "missing_skills": ["Kubernetes", "AWS"]\n}`;
+            const promptText = `Job Description: ${jdText}\n\nResume: ${resumeText}\n\nEvaluate the resume against the JD. Return ONLY JSON matching this schema:\n{\n  "overall_match_percentage": 85,\n  "technical_skills_score": 8.5,\n  "project_depth_score": 8.0,\n  "impact_statements_score": 7.5,\n  "ats_readiness_score": 9.0,\n  "role_alignment_score": 8.5,\n  "matching_skills": ["Python", "Django", "Docker"],\n  "missing_skills": ["Kubernetes", "AWS"],\n  "skill_distribution": [\n    {"skill": "Python Core", "weight": 30},\n    {"skill": "Distributed Systems", "weight": 20}\n  ],\n  "blueprint": [\n    {"stage": "MODULE 01", "title": "Architecture & Design", "desc": "Evaluate system design."},\n    {"stage": "MODULE 02", "title": "Concurrency", "desc": "Evaluate async programming."}\n  ]\n}`;
             
             const resp = await fetch("https://api.groq.com/openai/v1/chat/completions", {
               method: "POST",
@@ -3185,7 +3206,7 @@ ${transcript}
                 "Authorization": "Bearer " + window.GROQ_API_KEY
               },
               body: JSON.stringify({
-                model: "llama-3.1-8b-instant",
+                model: "openai/gpt-oss-120b",
                 messages: [{role: "system", content: "You are an expert technical recruiter and ATS parser. Return ONLY valid JSON."}, {role: "user", content: promptText}],
                 response_format: { type: "json_object" },
                 temperature: 0.2
@@ -3193,6 +3214,7 @@ ${transcript}
             });
             
             const data = await resp.json();
+            if (!resp.ok) { throw new Error(data.error?.message || 'HTTP ' + resp.status); }
             const parsed = JSON.parse(data.choices[0].message.content);
             
             document.getElementById('atsMatchPercentage').textContent = `${parsed.overall_match_percentage || 0}%`;
@@ -3216,9 +3238,53 @@ ${transcript}
             if (starContainer) {
               starContainer.innerHTML = `<span class="material-symbols-outlined text-tertiary text-[48px] mb-2">check_circle</span><p class="font-body-md text-body-md text-on-surface">ATS Scan Complete. Ready for interview.</p>`;
             }
+
+            // Dynamic Skill Distribution
+            const skillBarsContainer = document.getElementById('skillBarsContainer');
+            const extractedSkillContainer = document.getElementById('extractedSkillContainer');
+            if (skillBarsContainer && extractedSkillContainer && parsed.skill_distribution) {
+                const colors = ['secondary', 'primary', 'tertiary', 'secondary', 'primary-container'];
+                skillBarsContainer.innerHTML = parsed.skill_distribution.map((sk, i) => {
+                    const c = colors[i % colors.length];
+                    return `<div>
+                        <div class="flex justify-between font-label-code-sm text-label-code-sm mb-1">
+                            <span class="text-on-surface font-semibold">${sk.skill}</span>
+                            <span class="text-${c} font-mono">${sk.weight}% Weight</span>
+                        </div>
+                        <div class="w-full bg-surface-container-highest h-2 rounded-full overflow-hidden">
+                            <div class="bg-${c} h-full w-[${sk.weight}%] rounded-full"></div>
+                        </div>
+                    </div>`;
+                }).join('');
+                extractedSkillContainer.classList.remove('hidden');
+            }
+
+            // Dynamic Blueprint
+            const blueprintGrid = document.getElementById('blueprintGrid');
+            const blueprintContainer = document.getElementById('blueprintContainer');
+            if (blueprintGrid && blueprintContainer && parsed.blueprint) {
+                const b_colors = ['primary', 'secondary', 'tertiary', 'on-surface-variant'];
+                blueprintGrid.innerHTML = parsed.blueprint.map((stage, i) => {
+                    const c = b_colors[i % b_colors.length];
+                    return `<div class="bg-surface-container rounded-xl p-space-md flex flex-col justify-between">
+                        <div>
+                            <div class="flex items-center justify-between font-label-code-sm text-label-code-sm text-${c} font-bold">
+                                <span>${stage.stage}</span>
+                                <span class="px-2 py-0.5 rounded bg-surface-container-high text-on-surface-variant">30 MIN</span>
+                            </div>
+                            <div class="font-headline-sm text-body-lg text-on-surface font-semibold mt-2">${stage.title}</div>
+                            <p class="font-body-sm text-body-sm text-on-surface-variant mt-1">${stage.desc}</p>
+                        </div>
+                        <div class="mt-space-md flex items-center gap-1 font-label-code-sm text-label-code-sm text-${c}">
+                            <span class="material-symbols-outlined text-[16px]">pending</span> Auto-Queued
+                        </div>
+                    </div>`;
+                }).join('');
+                blueprintContainer.classList.remove('hidden');
+            }
             
             switchTab('tab-resume-ats');
-            showToast('ATS Scan complete!', 'check_circle');
+            showToast('ATS Scan & Curriculum Synthesized!', 'check_circle');
           } catch (err) {
             console.error("Groq ATS failed", err);
             showToast('Failed to evaluate ATS match with Groq.', 'error');
@@ -3281,7 +3347,7 @@ ${transcript}
                 "Authorization": "Bearer " + window.GROQ_API_KEY
               },
               body: JSON.stringify({
-                model: "llama-3.1-8b-instant",
+                model: "openai/gpt-oss-120b",
                 messages: [{role: "system", content: "You are a code evaluator. Return ONLY valid JSON."}, {role: "user", content: prompt}],
                 response_format: { type: "json_object" },
                 temperature: 0.2
@@ -3289,6 +3355,7 @@ ${transcript}
             });
             
             const data = await resp.json();
+            if (!resp.ok) { throw new Error(data.error?.message || 'HTTP ' + resp.status); }
             const parsed = JSON.parse(data.choices[0].message.content);
             
             document.getElementById('evalCorrectness').textContent = parsed.correctness_score || "-";

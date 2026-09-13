@@ -185,11 +185,9 @@ def build_cockpit_html():
     q_num = st.session_state.question_count
     total_q = st.session_state.total_questions
 
-    # Inject Groq API key and session bootstrap
-    api_k = get_api_key()
+    # Inject session bootstrap (API key is now exclusively handled client-side)
     bootstrap_js = f"""
     <script>
-      window.GROQ_API_KEY = "{api_k}";
       window.SESSION_BOOTSTRAP = {{
         candidateName: "{candidate}",
         targetRole: "{role}",
@@ -306,7 +304,7 @@ def build_cockpit_html():
             fu_q = html.escape(code_ev["follow_up_question"])
             html_content = re.sub(r"“Can you optimize memory consumption.*?never return\?”", f"“{fu_q}”", html_content)
 
-    # 7. Update SQLite Telemetry Table (Tab 6)
+    # 7. Update SQLite Telemetry Table and Chart (Tab 6)
     db_rows = get_interview_history(limit=5)
     if db_rows:
         tbody_html = ""
@@ -327,6 +325,24 @@ def build_cockpit_html():
             html_content,
             flags=re.DOTALL,
         )
+
+        # Update the Performance Trajectory chart labels
+        chart_rows = list(reversed(db_rows[:4]))
+        if chart_rows:
+            labels_html = ""
+            for i, r in enumerate(chart_rows):
+                score = int(r.get('overall_score', 0))
+                if i == len(chart_rows) - 1:
+                    labels_html += f'<span class="text-tertiary font-bold">Now ({score}%)</span>\n'
+                else:
+                    labels_html += f'<span>Sess {i+1} ({score}%)</span>\n'
+            
+            html_content = re.sub(
+                r"<div class=\"flex items-center justify-between font-label-code-sm text-label-code-sm text-on-surface-variant\">\s*<span>Sess 1.*?</div>",
+                f'<div class="flex items-center justify-between font-label-code-sm text-label-code-sm text-on-surface-variant">\n{labels_html}</div>',
+                html_content,
+                flags=re.DOTALL,
+            )
 
     return html_content
 
